@@ -66,8 +66,8 @@ class fcm:
         
         Usage: 
         >>> import importlib
-        >>> test = fcm.fcm()
-        >>> test.run()
+        >>> sim = fcm.fcm()
+        >>> sim.run()
         
         View the xarray.dataset of results as follows:
         >>> test.results
