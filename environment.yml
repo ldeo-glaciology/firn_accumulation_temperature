@@ -6,3 +6,5 @@ dependencies:
   - numpy
   - xarray
   - scipy
+  - hvplot
+  - matplotlib
