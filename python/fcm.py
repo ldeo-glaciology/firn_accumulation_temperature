@@ -47,8 +47,9 @@ class fcm:
         import numpy as np
         result_datasets = []                            # create an empty list to contain all the separate results xarray.datasets
         for x in param_values:                          # loop over the values of the parameter 
+            print('Running model with ' + str(param_to_vary) + ' = ' + str(x))
             keywords_to_pass = {param_to_vary: x}       # construct a dictionary to pass to the solver with the appropriate parameter name and value
-            self.run(**keywords_to_pass, **kwargs)      # run the solver
+            self.run(print_messages = False, **keywords_to_pass, **kwargs)      # run the solver
             if save_all_timesteps:                  
                 result_datasets.append(self.results)    # iteratively append the dataset into the list created above, if save_all_timesteps = True, then keep all the timesteps
             else:
@@ -75,12 +76,9 @@ class fcm:
 
         '''
         
-        
-        print('*** Starting setup.')
         import numpy as np
-
         self.p = {}
-        print('*** Defining default parameters.')
+
         # 1. define default paramaters   
         self.p['sim_label'] = 'default_label'
         self.p['b0_mpy'] = 0.1
@@ -101,14 +99,23 @@ class fcm:
         self.p['m'] = 1
         self.p['simDuration'] = 4
         self.p['scaleDuration'] = False
-        #self.p['param_to_keep_as_coord'] = None
+        self.p['interp_on_reg_z'] = False 
+        self.p['print_messages']   = True
+
+
 
 
         # 2. Replace any parameters that are defined by the user (in kwargs) 
         for key, values in kwargs.items():
-            print(' ---- overwriting ', key, ' with a user-defined value of', str(values), '.')
+            if 'print_messages' in locals() and print_messages == True:
+                print(' ---- overwriting ', key, ' with a user-defined value of', str(values), '.')
             self.p[key] = values     
-            
+
+
+        if self.p['print_messages']:
+            print('*** Starting setup.')
+ 
+
         # 3. Define (or extract from self.p) the dimensional parameters of the system.
         b0_mpy = self.p['b0_mpy']        # ice equivalent accumulation rate [m / yr]
         T_s_dim = self.p['T_s_dim']      # upper surface temperature [K]
@@ -173,8 +180,6 @@ class fcm:
 
         ### Normalized depth coordinates.
         z_h = np.flip(z_init)/z_0 
-        #print(len(z_h))
-
 
         ## 6.1. time span
         simDuration = self.p['simDuration']
@@ -233,10 +238,10 @@ class fcm:
         self.p['z_h'] = z_h
         self.p['w_s'] = w_s
 
-        print('*** Setup complete.')     
+        if self.p['print_messages']:
+            print('*** Setup complete.')     
 
     
-    # def integrate(self):
         from scipy import integrate
         from scipy import interpolate
         import numpy.matlib
@@ -246,14 +251,16 @@ class fcm:
 
         ### main integration step
         st = time.time()   # record start time
-        print('*** Starting integration.')
+        if self.p['print_messages']:
+            print('*** Starting integration.')
         sol = integrate.solve_ivp(self.eqns, self.p['t_span'], self.p['y0']);    # need to change back to self.eqns
         et = time.time()    # record end time
         elapsed_time = et - st    # get exectuion time
-        if sol.status == 0:
-            print('*** Succesfully finished integration in ', elapsed_time, 'seconds.')
-        else:
-            warnings.warn('*** Integrator failed to find a solution.')
+        if self.p['print_messages']:
+            if sol.status == 0:
+                print(f"*** Succesfully finished integration in  {elapsed_time:.3} seconds.")
+            else:
+                warnings.warn('*** Integrator failed to find a solution.')
         
         ### Collect the variables.
         phi = sol.y[:-1:4]
@@ -264,14 +271,15 @@ class fcm:
         t = sol.t
         
         ### post-processing
-        print('*** Post-processing.')
+        if self.p['print_messages']:
+            print('*** Post-processing.')
 
         ### compute density from porosity
         rho = self.p['rho_i']*(1 - phi)        
                     
         ### Un-normalized depth coordinates
         Hg, zg = np.meshgrid(Height,self.p['z_h'])
-        Depth = self.p['h_0']*Hg*zg
+        z = Hg*zg     # non-scaled depth (still nondimensional) eqn B1 from TC manuscript
 
         n = self.p['n']
         m = self.p['m']
@@ -279,13 +287,13 @@ class fcm:
         z_h = self.p['z_h']
         lambda_c = self.p['lambda_c']
         w_s = self.p['w_s']
+        z0 = self.p['z0']
 
         ### compute velocity, mass, firn air content and firn thickenss
         W = np.empty_like(phi)         # velocity
         M = np.empty_like(Height)      # total mass
         z830 = np.empty_like(Height)   # firn thickness (depth to 830 kg/m^3)
         FAC = np.empty_like(Height)    # firn air content
-        #Mass = nan(numel(Time),1);
         for i in range(len(t)):
         ### Compute stress    
             S_int = Height[i]*(1 - phi[:,i])
@@ -294,11 +302,11 @@ class fcm:
             W_int = -(Height[i]/Ar)*Sigma**n*phi[:,i]*m*np.exp(lambda_c*T[:,i])/r2[:,i]
             W[:,i] = integrate.cumulative_trapezoid(W_int, z_h, initial=0) + w_s
         ### Compute total mass in the column.
-            M[i] = integrate.trapezoid(1 - phi[:,i], Depth[:,i])
+            M[i] = integrate.trapezoid(1 - phi[:,i], z[:,i]*z0)
         ### Compute firn air content
-            FAC[i] = integrate.trapezoid(phi[:,i], Depth[:,i])
+            FAC[i] = integrate.trapezoid(phi[:,i], z[:,i]*z0)
         ### Compute the firn thickness 
-            f = interpolate.interp1d(phi[:,i],Depth[:,i]/self.p["h_0"], bounds_error=False)
+            f = interpolate.interp1d(phi[:,i],z[:,i], bounds_error=False)
             z830[i] = f(1-830/self.p["rho_i"])
 
         ### Create output xarray
@@ -312,18 +320,19 @@ class fcm:
                 A=(["z_h", "t"], A),
                 T=(["z_h", "t"], T),
                 w=(["z_h", "t"], W),
-                H=(["t"], Height),
+                h=(["t"], Height),
                 M=(["t"], M),
                 FAC=(["t"], FAC),
                 z830=(["t"], z830),
             ),
             coords=dict(
                 z_h=(["z_h"], self.p['z_h']),
-                depth=(["z_h", "t"],Depth),
+                z=(["z_h", "t"], z),
                 t=t,
             ),
             attrs=dict(simulation_parameters=self.p),
         )
+
 
         # add attributes to variables
         out.phi.attrs = dict(name="porosity", 
@@ -349,7 +358,7 @@ class fcm:
             long_name="nondimensional temperature",
             scale="to be added")
 
-        out.H.attrs = dict(name="height", 
+        out.h.attrs = dict(name="height", 
             long_name="nondimensional domain height",
             scale=self.p["z0"],
             scale_units="m")
@@ -376,7 +385,7 @@ class fcm:
 
         # add attributes to coordinates
         out.z_h.attrs = dict(name="non_dim_depth",
-            long_name="nondimensional depth",
+            long_name="scaled and nondimensional depth",
             scale="H(t) * z_0",
             scale_units="m",
             notes="the scaling of this variable changes with time through the simulation. So z_h = 1 means a different dimensional depth at each time step. Specifically, z_h = 1 corresponds to H(t)*z_0. H(t) is one of the other variables, and z_0 is the dimensional scale for depth [m].")
@@ -386,11 +395,23 @@ class fcm:
             scale=self.p["t_0"],
             scale_units="s")
 
-        out.depth.attrs = dict(name="depth", 
-            long_name="dimensional depth",
-            units="m")
+        out.z.attrs = dict(name="depth", 
+            long_name="nondimensional depth, irregular grid",
+            scale=self.p['z0'],
+            scale_units="m")
 
         self.results = out
+
+        # interpolate onto regular vertical grid, z
+        if self.p['interp_on_reg_z'] == True:
+            if self.p['print_messages']:
+                print('**** interpolating onto regular vertical grids')
+            self.interp_regular_z(var_name = 'phi')
+            self.interp_regular_z(var_name = 'rho')
+            self.interp_regular_z(var_name = 'r2')
+            self.interp_regular_z(var_name = 'A')
+            self.interp_regular_z(var_name = 'T')
+            self.interp_regular_z(var_name = 'w')
 
     # plot depth profiles
     def profiles(self,var_to_plot='phi', time_to_plot=1000):
@@ -451,17 +472,22 @@ class fcm:
         '''
         
         da = self.results[var_to_plot]
-        da.plot() # profiles of last time slice
+        da.plot(yincrease = False) # profiles of last time slice
 
     def time_series(self,var_to_plot='H'):
         '''
         Time series of variables that do not vary with depth: H, FAC, z830, M  
 
+        Inputs: 
         var_to_plot is the variable you want to plot. 
         This has to be one which does not vary with depth: 
         e.g., phi, r2, rho, A, or T. The default is the porosity, phi.
 
 
+        Returns: 
+        Creates a plot of the a time series of the prescribed variable.
+
+        Usage:
         For example, if the simulation have been run as follows:
         >>> import fcm
         >>> sim = fcm.fcm()
@@ -474,6 +500,119 @@ class fcm:
         da = self.results[var_to_plot]
         da.plot.line(x='t')
 
+
+    def interp_at_depth(self, depth_to_interp = 20, var_name = 'phi'):
+        '''
+        Interpolating variables at a prescribed depth for all time steps. 
+
+        Inputs:
+        depth_to_interp -- the depth in meters you want the variable interpolated at (a number)
+        var_name -- the name of the variable you want interplolated (str)
+
+        Returns:
+        Adds a variable to the results xarray dataset with a name name from the two inputs, for example, results.phi_20
+
+        Usage:
+        If the simulation has been run as follows:
+        >>> import fcm
+        >>> sim = fcm.fcm()
+        >>> sim.integrate()
+
+        Use
+        >>> sim.interp_at_depth(depth_to_interp = 30, var_name = 'A')
+        '''
+        
+        import warnings
+        warnings.warn('This method is outdated. You are better off applying fcm.interp_regular_z to the variable you are interested in, to interpolate it on to a regular vertical grid.')
+
+        from scipy import interpolate
+        import numpy as np
+        import xarray as xr
+
+        name_for_new_var = var_name + '_' + str(depth_to_interp)
+
+        interpolated_values = np.empty_like(self.results.t.values)
+        for i in range(len(self.results.t.values)):
+            f = interpolate.interp1d(self.results.z.isel(t=i).values*self.p['z0'],self.results[var_name].isel(t=i).values, bounds_error = False)
+            interpolated_values[i] =f(depth_to_interp)
+
+
+        self.results[name_for_new_var] = self.results.h.copy(data=interpolated_values)
+
+
+
+    def interp_regular_z(self, var_name = 'phi'):
+        '''
+        Interpolate variable on to a regular - i.e. a grid which is same at all time steps. 
+        
+        Inputs:
+        var_name -- the name of the variable you want interplolated (str)
+
+        Returns:
+        Adds a variable to the results xarray dataset with '_r' affixed to the end  (standing for 'regular')
+        of the variable name, e.g., phi_r.
+
+        It also adds a new dimension-coordinate, z_r, which is the nondimensional depth on a regular grid. 
+        This is the same for every time step so the coordinate is only a function of z. 
+        
+        Usage:
+        If the simulation has been run as follows:
+        >>> import fcm
+        >>> sim = fcm.fcm()
+        >>> sim.integrate()
+
+        Use
+        >>> sim.interp_regular_z(var_name = 'A')
+        This will produce a new variable called A_r and a new dimension cooridnate called z_r. 
+        '''
+      
+        from scipy import interpolate
+        import numpy as np
+        import xarray as xr
+       
+        z_q = np.linspace(0,1.2,round(self.p['N']*1.2))   # query points for interpolation
+        Nz = len(z_q)
+        Nt = len(self.results.t.values)
+        interpolated_values = np.empty((Nz,Nt))
+
+        for i in range(Nt):
+            
+            #z_h = self.results.z_h.values                 # scaled depth
+            #h =   self.results.h.isel(t=i).values         # domain length
+            #z =   z_h*h                                   # nonscaled depth (still nondimensional): eqn B1 from TC manuscript
+            z =   self.results.z.isel(t=i).values 
+            Y =   self.results[var_name].isel(t=i).values # variable on old grid
+
+            f = interpolate.interp1d(z,Y,bounds_error = False)
+            interpolated_values[:,i] =f(z_q)
+
+        
+        name_for_new_var = var_name + '_r'
+
+        t_attrs = self.results.t.attrs    # save the attributes of t, because the line below deletes them. 
+
+        self.results[name_for_new_var] = xr.DataArray(
+            data=interpolated_values,
+            dims=["z_r", "t"],
+            coords=dict(
+                z_r=z_q))
+
+
+        self.results.t.attrs = t_attrs
+
+        new_name_for_xarray = self.results[var_name].attrs['name'] + ' (regular)'
+        new_long_name_for_xarray = self.results[var_name].attrs['long_name'] + ' (regular grid)'
+
+        self.results[name_for_new_var].attrs = dict(name=new_name_for_xarray, 
+            long_name=new_long_name_for_xarray,
+            scale=self.p['z0'],
+            scale_units="m")
+        
+        
+        self.results.z_r.attrs = dict(name="depth", 
+            long_name="nondimensional depth, regular grid",
+            scale=self.p['h_0'],
+            scale_units="m")
 
     # Model equations      
     def eqns(self,t, y):
