@@ -6,4 +6,6 @@ It sovles equations describing firn compaction, grain growth, heat flow, and age
 
 The addition of heat flow is a work in progress. 
 
-The *python* directory contains a pythin version of the isothermal model (fcm.py).
+The *python* directory contains a python version of the isothermal model (fcm.py).
+
+All development is happening in the python directory.
