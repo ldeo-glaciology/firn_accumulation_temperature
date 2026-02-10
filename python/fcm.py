@@ -1,6 +1,6 @@
 class fcm:   
     """
-    This is a firn compaction model and a few simple methods
+    A firn compaction model, along with a few simple methods
     for performing parameter searches and plotting results, packaged as
     a class called fcm. 
     """
@@ -10,10 +10,10 @@ class fcm:
         This is intended as a convenient way of performing a parameter search. 
         It loops over a given parameter and runs the model for each value, then
         concatenates the results into one xarray dataset, with the parameter defined 
-        as a new dimension and corresonding coordinate. 
+        as a new dimension and corresponding coordinate. 
 
         Inputs 
-        param_to_vary -- a string of the name of the paraneter to perform the search over
+        param_to_vary -- a string of the name of the parameter to perform the search over
         e.g., 'beta'
 
         param_values -- a list of numpy array of parameter values. These should be monotonically increasing.
@@ -22,7 +22,7 @@ class fcm:
         If False (the default) then only the last time step of each simulation is saved. 
 
         **kwargs -- can be a series of keyword-value pairs overwriting the default values of 
-        other model parameters, i.e. not the one whichthis 1D search is over, but any of the 
+        other model parameters, i.e. not the one which this 1D search is over, but any of the 
         other whose default values can be seen at the start of the 'run' function below. 
 
         Returns: a dataset in self.results which contains a new dimension for the parameter to 
@@ -543,7 +543,7 @@ class fcm:
 
     def interp_regular_z(self, var_name = 'phi'):
         '''
-        Interpolate variable on to a regular - i.e. a grid which is same at all time steps. 
+        Interpolate variable on to a regular grid - i.e. a grid which is same at all time steps. 
         
         Inputs:
         var_name -- the name of the variable you want interplolated (str)
@@ -605,8 +605,8 @@ class fcm:
 
         self.results[name_for_new_var].attrs = dict(name=new_name_for_xarray, 
             long_name=new_long_name_for_xarray,
-            scale=self.p['z0'],
-            scale_units="m")
+            depth_scale=self.p['z0'],
+            depth_scale_units="m")
         
         
         self.results.z_r.attrs = dict(name="depth", 
@@ -654,6 +654,7 @@ class fcm:
         dphidz = np.matmul(D1, phi) 
         dr2dz  = np.matmul(D1, r2)  
         dAdz   = np.matmul(D1, A)  
+        dTdz   = np.matmul(D1, T) 
 
         ### Compute stress.
         s_int = H*(1 - phi) 
@@ -685,7 +686,7 @@ class fcm:
         dphidt[0] = 0 
         dr2dt[0] = 0 
         dAdt[0] = 0 
-
+        dTdt[0] = 0
                 
         return dydt
 
